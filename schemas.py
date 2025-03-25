@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Optional
 
 class ProductBase(BaseModel):
     name: str
@@ -9,7 +10,7 @@ class ProductCreate(ProductBase):
 
 class Product(ProductBase):
     id: int
+    image_url: Optional[str] = None
 
     class Config:
-        orm_mode = True
-# The Pydantic models in schemas.py are used to define the data that can be sent or received by the API.
+        from_attributes = True

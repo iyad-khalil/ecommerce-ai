@@ -1,13 +1,17 @@
-from database import engine, Base, SessionLocal # Importer le moteur de base de données, la base de données et la session
+import os
+from database import engine, Base, SessionLocal
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
-from models import Product
-from schemas import ProductCreate, Product
-from transformers import MarianMTModel, MarianTokenizer # Importer les classes MarianMTModel et MarianTokenizer de la librairie transformers
+from models import Product as ProductModel
+from schemas import ProductCreate, Product as ProductSchema
+from transformers import MarianMTModel, MarianTokenizer
 import openai
-openai.api_key = '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'
+from dotenv import load_dotenv
 
-# Créer les tables en base de données
+load_dotenv()
+
+# Charger ta clé OpenAI depuis les variables d'environnement
+openai.api_key = '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'
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
@@ -16,8 +20,6 @@ app = FastAPI()
 def read_root():
     return {"message": "Bienvenue sur l'API de l'e-commerce AI !"}
 
-
-# Dépendance pour obtenir une session de base de données
 def get_db():
     db = SessionLocal()
     try:
@@ -25,71 +27,67 @@ def get_db():
     finally:
         db.close()
 
-# Route pour ajouter un produit
-@app.post("/products/", response_model=Product)
+@app.post("/products/", response_model=ProductSchema)
 def create_product(product: ProductCreate, db: Session = Depends(get_db)):
-    db_product = Product(name=product.name, description=product.description)
+    db_product = ProductModel(name=product.name, description=product.description)
     db.add(db_product)
     db.commit()
     db.refresh(db_product)
     return db_product
 
-# Route pour récupérer tous les produits
-@app.get("/products/", response_model=list[Product])
+@app.get("/products/", response_model=list[ProductSchema])
 def get_products(db: Session = Depends(get_db)):
-    return db.query(Product).all()
-
-
+    return db.query(ProductModel).all()
 
 # Charger le modèle de traduction
 def load_translation_model():
-    model_name = "Helsinki-NLP/opus-mt-en-fr"  # Traduction de l'anglais vers le français (tu peux changer pour d'autres langues)
+    model_name = "Helsinki-NLP/opus-mt-en-fr"
     model = MarianMTModel.from_pretrained(model_name)
     tokenizer = MarianTokenizer.from_pretrained(model_name)
     return model, tokenizer
 
 model, tokenizer = load_translation_model()
 
-
-# Fonction de traduction
 def translate_text(text: str, target_lang: str = "fr"):
     translated = model.generate(**tokenizer(text, return_tensors="pt", padding=True))
     return tokenizer.decode(translated[0], skip_special_tokens=True)
 
-# Fonction de génération d'image avec DALL-E
 def generate_product_image(description: str):
-    response = openai.Image.create(
-        prompt=description,
-        n=1,
-        size="256x256"
+    response = openai.images.generate(
+        model="dall-e-3",  # Use DALL·E model instead of "image-alpha-001"
+        prompt=description,  
+        n=1,  
+        size="1024x1024"
     )
-    image_url = response['data'][0]['url']
-    return image_url
+    return response.data[0].url  # Updated way to get image URL
 
-
-# Route pour traduire la description d'un produit
-@app.put("/products/{product_id}/translate/")
+@app.put("/products/{product_id}/translate/", response_model=ProductSchema)
 def translate_product_description(product_id: int, target_lang: str = "fr", db: Session = Depends(get_db)):
-    db_product = db.query(Product).filter(Product.id == product_id).first()
+    db_product = db.query(ProductModel).filter(ProductModel.id == product_id).first()
     if db_product is None:
         raise HTTPException(status_code=404, detail="Product not found")
-    
-    translated_description = translate_text(db_product.description, target_lang)
-    db_product.description = translated_description
+
+    db_product.description = translate_text(db_product.description, target_lang)
     db.commit()
     db.refresh(db_product)
     return db_product
+@app.get("/ping")
+def ping():
+    return {"message": "pong"}
 
 
-# Route pour générer une image pour un produit
-@app.put("/products/{product_id}/generate-image/")
+@app.put("/products/{product_id}/generate-image/", response_model=ProductSchema)
 def generate_image_for_product(product_id: int, db: Session = Depends(get_db)):
-    db_product = db.query(Product).filter(Product.id == product_id).first()
+    db_product = db.query(ProductModel).filter(ProductModel.id == product_id).first()
     if db_product is None:
         raise HTTPException(status_code=404, detail="Product not found")
-    
+
+    # Generate image URL using the new OpenAI API
     image_url = generate_product_image(db_product.description)
-    db_product.image_url = image_url  # Ajoute un champ image_url à ta table `products`
+
+    # Update the product's image URL
+    db_product.image_url = image_url
     db.commit()
     db.refresh(db_product)
+
     return db_product
